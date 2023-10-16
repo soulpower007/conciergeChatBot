@@ -1,0 +1,11 @@
+Index creation:
+--------------
+curl -u master_username:master_password -X PUT "<ES_URL>/<ES_INDEX>?pretty"
+
+Bulk Loading of Data:
+---------------------
+curl -XPOST -u 'master_username:master_password' '<ES_URL>/<ES_INDEX>/_bulk?pretty' --data-binary @1data_es_upload.json -H 'Content-Type: application/json'
+
+Search Index:
+-------------
+curl -XGET -u 'master_username:master_password' '<ES_URL>/<ES_INDEX>/_search?q=rebel&pretty=true'

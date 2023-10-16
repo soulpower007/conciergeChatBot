@@ -5,28 +5,21 @@ import random
 from botocore.exceptions import ClientError
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
+import constants
 
-#Elastic Serch
 
-REGION = 'us-east-1'
+#OpenSearch / Elastic Search query part
+REGION = constants.REGION
 HOST = 'search-restaurants-scc64pmmoarbfenp6oxckdrz3u.us-east-1.es.amazonaws.com'
 INDEX = 'id'
 
-# sts_response = boto3.client('sts').get_session_token()
-
-# access_key_id = sts_response['Credentials']['AccessKeyId']
-# secret_access_key = sts_response['Credentials']['SecretAccessKey']
-# session_token = sts_response['Credentials']['SessionToken']
-
 def get_awsauth(region, service):
     cred = boto3.Session().get_credentials()
-    return AWS4Auth('AKIAQ4RPTW7E7WEDZGU3',
-                    '0Z9MClZNubuKvNlaxLlNbL1RYZ2xqqV2kEimd1D+',
+    return AWS4Auth(constants.ACCESS,
+                    constants.SECRET_ACCESS,
                     region,
                     service
-                    # session_token=session_token
                     )
-
 
 def elasticquery(term):
     q = {'size': 100, 'query': {'multi_match': {'query': term}}}
@@ -122,7 +115,6 @@ def lambda_handler(event=None, context=None):
     # TODO implement
 
     # Fetch Query from SQS
-
     sqs = boto3.client('sqs')
     queue_url = 'https://sqs.us-east-1.amazonaws.com/061303142345/suggestionsQueue'
     
@@ -146,10 +138,10 @@ def lambda_handler(event=None, context=None):
         msg_attributes=message['MessageAttributes']
         query = {"query": {"match": {"cuisine": msg_attributes["cuisine"]["StringValue"]}}}
         email = msg_attributes["email"]["StringValue"]
+        chat_cusine =  msg_attributes["cuisine"]["StringValue"]
 
         # Fetch the IDS from elasticsearch
-
-        ids = elasticquery('indian')
+        ids = elasticquery(chat_cusine)
         restaurant_id_indices = random.sample(ids,5)
 
         # init dynamodb details
@@ -157,7 +149,8 @@ def lambda_handler(event=None, context=None):
         table = dynamodb.Table('yelp-restaurants')
         
         restaurants_set = []
-             
+
+        # iterate through indices and get details     
         for id in restaurant_id_indices:
             suggested_restaurant = get_dynamo_data(dynamodb, table, id)
             restaurants_set.append(suggested_restaurant)
