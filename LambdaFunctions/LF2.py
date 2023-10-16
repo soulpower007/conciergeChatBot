@@ -1,0 +1,176 @@
+import json
+import boto3
+import decimal
+import random
+from botocore.exceptions import ClientError
+from opensearchpy import OpenSearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
+
+#Elastic Serch
+
+REGION = 'us-east-1'
+HOST = 'search-restaurants-scc64pmmoarbfenp6oxckdrz3u.us-east-1.es.amazonaws.com'
+INDEX = 'id'
+
+# sts_response = boto3.client('sts').get_session_token()
+
+# access_key_id = sts_response['Credentials']['AccessKeyId']
+# secret_access_key = sts_response['Credentials']['SecretAccessKey']
+# session_token = sts_response['Credentials']['SessionToken']
+
+def get_awsauth(region, service):
+    cred = boto3.Session().get_credentials()
+    return AWS4Auth('AKIAQ4RPTW7E7WEDZGU3',
+                    '0Z9MClZNubuKvNlaxLlNbL1RYZ2xqqV2kEimd1D+',
+                    region,
+                    service
+                    # session_token=session_token
+                    )
+
+
+def elasticquery(term):
+    q = {'size': 100, 'query': {'multi_match': {'query': term}}}
+
+    client = OpenSearch(hosts=[{
+        'host': HOST,
+        'port': 443
+    }],
+        http_auth=get_awsauth(REGION, 'es'),
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection)
+
+    res = client.search(index='id', body=q)
+    # print(res)
+
+    hits = res['hits']['hits']
+    results = []
+    for hit in hits:
+        # results.append(hit['_source']['cusine'])
+        results.append(hit['_id'])
+        
+    return results
+
+
+def send_email(restaurants,email):
+    try:
+        client = boto3.client('ses')
+        mailBody = "Hi here are 5 restaurants matching your preferences\n"
+        for restaurant in restaurants:
+            mailBody = mailBody + f'{restaurant["name"] } ' 
+            mailBody = mailBody + f'{" ".join(restaurant["display_address"])}' + '\n'
+        response = client.send_email(
+            Source='aa11164@nyu.edu',
+            Destination={
+                'ToAddresses': [
+                   email,
+                ]},
+                Message={
+                'Subject' : {
+                    'Data' : "Dining Concierge Restaurant Recommendations"
+                },
+                'Body' :{
+                    'Text' :{
+                       'Data' : str(mailBody)
+                    }
+                }
+            }
+        )
+        print('email sent')
+    except KeyError:
+        logger.debug("Error sending ")
+
+
+
+def replace_decimals(obj):
+    if isinstance(obj, list):
+        for i in range(0,len(obj)):
+            obj[i] = replace_decimals(obj[i])
+        return obj
+    elif isinstance(obj, dict):
+        for k in obj.keys():
+            obj[k] = replace_decimals(obj[k])
+        return obj
+    elif isinstance(obj, decimal.Decimal):
+        return str(obj)
+    else:
+        return obj
+
+def get_dynamo_data(dynno, table, key):
+    response = table.get_item(Key={'id':key}, TableName='yelp-restaurants')
+    # print(response)
+    response = replace_decimals(response)
+    # print('abcd')
+    # print(response)
+    
+    name = response['Item']['name'] if response['Item']['name'] else None
+    rating = response['Item']['rating'] if response['Item']['rating'] else None
+    display_address = response['Item']['location']['display_address'] if  response['Item']['location']['display_address'] else None
+    # review_count = response['Item']['review_count'] if  response['Item']['review_count'] else None
+    # coordinates = response['Item']['coordinates']  if response['Item']['coordinates']  else None
+    
+    return {"name":name,
+            "rating": rating,
+            # "price": price,
+            "display_address":display_address,
+            # "review_count": review_count,
+            # "coordinates":coordinates
+            } 
+
+
+def lambda_handler(event=None, context=None):
+    # TODO implement
+
+    # Fetch Query from SQS
+
+    sqs = boto3.client('sqs')
+    queue_url = 'https://sqs.us-east-1.amazonaws.com/061303142345/suggestionsQueue'
+    
+    
+    response = sqs.receive_message(
+        QueueUrl=queue_url,
+        AttributeNames=[
+            'time', 'cuisine', 'location', 'num_people', 'email'
+        ],
+        MaxNumberOfMessages=1,
+        MessageAttributeNames=[
+            'All'
+        ],
+        VisibilityTimeout=0,
+        WaitTimeSeconds=0
+    )
+    messages = response['Messages'] if 'Messages' in response.keys() else []
+            
+    for message in messages:
+        msg_attributes=message['MessageAttributes']
+        query = {"query": {"match": {"cuisine": msg_attributes["cuisine"]["StringValue"]}}}
+        email = msg_attributes["email"]["StringValue"]
+
+        # Fetch the IDS from elasticsearch
+
+        ids = elasticquery('indian')
+        restaurant_id_indices = random.sample(ids,5)
+
+        # init dynamodb details
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table('yelp-restaurants')
+        
+        restaurants_set = []
+             
+        for id in restaurant_id_indices:
+            suggested_restaurant = get_dynamo_data(dynamodb, table, id)
+            restaurants_set.append(suggested_restaurant)
+        
+        send_email(restaurants_set,email)
+
+        
+    
+    
+    
+    
+    return {
+        'statusCode': 200,
+        'body': ''
+    }
+
+# lambda_handler()
