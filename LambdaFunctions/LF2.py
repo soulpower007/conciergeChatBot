@@ -141,7 +141,8 @@ def lambda_handler(event=None, context=None):
     )
     messages = response['Messages'] if 'Messages' in response.keys() else []
             
-    for message in messages:
+    while messages:
+        message = messages.pop()
         msg_attributes=message['MessageAttributes']
         query = {"query": {"match": {"cuisine": msg_attributes["cuisine"]["StringValue"]}}}
         email = msg_attributes["email"]["StringValue"]
@@ -162,11 +163,11 @@ def lambda_handler(event=None, context=None):
             restaurants_set.append(suggested_restaurant)
         
         send_email(restaurants_set,email)
-
-        
     
-    
-    
+        sqs.delete_message(
+            QueueUrl=queue_url,
+            ReceiptHandle=message['ReceiptHandle']
+        )
     
     return {
         'statusCode': 200,
